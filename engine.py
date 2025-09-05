@@ -38,30 +38,37 @@ def assign_letters(means, pvals, alpha=0.05):
 
 # ---------- Main Function ----------
 def analyze_data(file_path, sheet_name):
-    # Load Excel sheet as-is (no renaming)
+    # Load Excel sheet
     df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-    # Use the exact columns from the file
-    response_vars = [
-        "perc_emergence", "plant_height_2was", "no_of_leaves_2was",
-        "stem_girth_2was", "leaf_area_2was", "plant_height_4was",
-        "no_of_leaves_4was", "stem_girth_4was", "leaf_area_4was",
-        "plant_height_6was", "no_of_leaves_6was", "stem_girth_6was",
-        "leaf_area_6was", "no_of_fruits", "fresh_weight"
-    ]
+    # --- Dynamically detect treatment & numeric columns ---
+    treatment_col = None
+    for candidate in ["mulch_rate", "treatment", "trt"]:
+        if candidate in df.columns:
+            treatment_col = candidate
+            break
+    if not treatment_col:
+        raise ValueError("No treatment column found (expected: mulch_rate, treatment, trt)")
+
+    # Get all numeric columns except treatment
+    response_vars = df.select_dtypes(include="number").columns.tolist()
+    if treatment_col in response_vars:
+        response_vars.remove(treatment_col)
+
+    if not response_vars:
+        raise ValueError("No numeric columns found for ANOVA.")
 
     all_results = []
     doc = Document()
-    doc.add_heading("Mulch Experiment ANOVA & LSD Report", 0)
+    doc.add_heading("Crop Experiment ANOVA & LSD Report", 0)
 
     for var in response_vars:
         print(f"\n=== ANOVA for {var} ===")
-        model = ols(f'Q("{var}") ~ C(mulch_rate)', data=df).fit()  # Q() handles special chars like %
-        anova = sm.stats.anova_lm(model, typ=2)
-        anova = anova.fillna("-")
+        model = ols(f'Q("{var}") ~ C({treatment_col})', data=df).fit()
+        anova = sm.stats.anova_lm(model, typ=2).fillna("-")
         print(anova)
 
-        # Add ANOVA table to Word doc
+        # --- Add ANOVA table to Word ---
         doc.add_heading(var, level=1)
         doc.add_paragraph("ANOVA Table:")
         table = doc.add_table(rows=1, cols=len(anova.columns) + 1)
@@ -75,18 +82,18 @@ def analyze_data(file_path, sheet_name):
             for i, val in enumerate(row):
                 row_cells[i+1].text = f"{val:.4f}" if isinstance(val, (float, int)) else str(val)
 
-        means = df.groupby("mulch_rate")[var].mean()
+        means = df.groupby(treatment_col)[var].mean()
 
-        if anova['PR(>F)'].iloc[0] < 0.05:
+        if isinstance(anova['PR(>F)'].iloc[0], float) and anova['PR(>F)'].iloc[0] < 0.05:
             print("Significant effect found → running LSD test")
-            lsd = sp.posthoc_ttest(df, val_col=var, group_col='mulch_rate', p_adjust=None)
+            lsd = sp.posthoc_ttest(df, val_col=var, group_col=treatment_col, p_adjust=None)
             letters = assign_letters(means, lsd)
 
-            # Add LSD results to Word doc
+            # LSD results → Word table
             doc.add_paragraph("LSD Grouping:")
             lsd_table = doc.add_table(rows=1, cols=3)
             hdr_cells = lsd_table.rows[0].cells
-            hdr_cells[0].text = "Mulch Rate"
+            hdr_cells[0].text = treatment_col
             hdr_cells[1].text = "Mean"
             hdr_cells[2].text = "Group"
             for t in means.index:
@@ -96,15 +103,15 @@ def analyze_data(file_path, sheet_name):
                 row_cells[1].text = f"{means[t]:.2f}"
                 row_cells[2].text = letters[t]
 
-            # Plot and save
+            # Plot + annotate
             plt.figure(figsize=(7, 4))
-            means.plot(kind='bar', yerr=df.groupby("mulch_rate")[var].std(), capsize=4)
+            means.plot(kind='bar', yerr=df.groupby(treatment_col)[var].std(), capsize=4)
             for i, (t, mean) in enumerate(means.items()):
                 plt.text(i, mean + 0.05 * mean, letters[t], ha='center', va='bottom',
                          fontsize=12, fontweight='bold')
-            plt.title(f"{var} by Mulch Rate")
+            plt.title(f"{var} by {treatment_col}")
             plt.ylabel(var)
-            plt.xlabel("Mulch Rate (kg/ha)")
+            plt.xlabel(f"{treatment_col}")
             plt.tight_layout()
 
             plot_path = os.path.join(os.path.dirname(file_path), f"{var}_plot.png")
@@ -116,20 +123,19 @@ def analyze_data(file_path, sheet_name):
             for t in means.index:
                 all_results.append([var, t, means[t], "-"])
 
-    # Save results to Excel
-    output_xlsx = os.path.join(os.path.dirname(file_path), "mulch_analysis_results.xlsx")
-    results_df = pd.DataFrame(all_results, columns=["variable", "mulch_rate", "mean", "group_letter"])
+    # --- Save results ---
+    output_xlsx = os.path.join(os.path.dirname(file_path), "analysis_results.xlsx")
+    results_df = pd.DataFrame(all_results, columns=["variable", treatment_col, "mean", "group_letter"])
     results_df.to_excel(output_xlsx, index=False)
 
-    # Save Word doc
-    output_docx = os.path.join(os.path.dirname(file_path), "mulch_analysis_report.docx")
+    output_docx = os.path.join(os.path.dirname(file_path), "analysis_report.docx")
     doc.save(output_docx)
 
     print(f"\n✅ Results saved to:\n   Excel: {output_xlsx}\n   Word: {output_docx}")
 
 # ---------- CLI ----------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Analyze mulch experiment data (ANOVA + LSD)")
+    parser = argparse.ArgumentParser(description="Analyze crop experiment data (ANOVA + LSD)")
     parser.add_argument("file", help="Path to the Excel file")
     parser.add_argument("sheet", help="Sheet name to analyze")
     args = parser.parse_args()
