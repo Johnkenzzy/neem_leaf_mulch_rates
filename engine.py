@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 from docx import Document
 from docx.shared import Inches
 import os
+import warnings
+
+warnings.filterwarnings("ignore", message="Precision loss occurred in moment calculation")
 
 # ---------- Helper Function to Assign Letters ----------
 def assign_letters(means, pvals, alpha=0.05):
@@ -63,6 +66,11 @@ def analyze_data(file_path, sheet_name):
     doc.add_heading("Crop Experiment ANOVA & LSD Report", 0)
 
     for var in response_vars:
+         # Drop missing rows for treatment and this variable
+        df_var = df[[treatment_col, var]].dropna()
+        if df_var.empty:
+            print(f"\n⚠️ Skipping {var} (no valid data)")
+            continue
         print(f"\n=== ANOVA for {var} ===")
         model = ols(f'Q("{var}") ~ C({treatment_col})', data=df).fit()
         anova = sm.stats.anova_lm(model, typ=2).fillna("-")
@@ -86,7 +94,7 @@ def analyze_data(file_path, sheet_name):
 
         if isinstance(anova['PR(>F)'].iloc[0], float) and anova['PR(>F)'].iloc[0] < 0.05:
             print("Significant effect found → running LSD test")
-            lsd = sp.posthoc_ttest(df, val_col=var, group_col=treatment_col, p_adjust=None)
+            lsd = sp.posthoc_ttest(df_var, val_col=var, group_col=treatment_col, p_adjust=None)
             letters = assign_letters(means, lsd)
 
             # LSD results → Word table
