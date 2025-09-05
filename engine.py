@@ -111,7 +111,7 @@ def analyze_data(file_path, sheet_name):
                          fontsize=12, fontweight='bold')
             plt.title(f"{var} by {treatment_col}")
             plt.ylabel(var)
-            plt.xlabel(f"{treatment_col}")
+            plt.xlabel(f"{treatment_col}(kg/ha)")
             plt.tight_layout()
 
             plot_path = os.path.join(os.path.dirname(file_path), f"{var}_plot.png")
